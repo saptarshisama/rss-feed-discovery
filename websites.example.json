@@ -1,0 +1,19 @@
+{
+    "websites": [
+        {
+            "url": "https://example.com",
+            "name": "Example Site",
+            "category": "Example"
+        },
+        {
+            "url": "https://blog.example.org",
+            "name": "Example Blog",
+            "category": "Writing"
+        },
+        {
+            "url": "https://news.example.net",
+            "name": "Example News",
+            "category": "News"
+        }
+    ]
+}
