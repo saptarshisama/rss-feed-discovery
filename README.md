@@ -1,6 +1,6 @@
 # RSS/Atom Feed Discovery Tool
 
-A powerful Python tool that automatically discovers RSS and Atom feeds from websites. Simply provide a list of website URLs, and this tool will intelligently search for and verify their feed URLs.
+A tool that automatically discovers RSS and Atom feeds from websites. Simply provide a list of website URLs, and this tool will intelligently search for and verify their feed URLs.
 
 ## 🌟 Features
 
