@@ -273,17 +273,25 @@ def discover_for_site(site_data: Dict) -> Dict:
             out["error"] = "No feed found on specified path"
     else:
         content_page = find_type_b_content_page(base_url)
+        feed = None
+        
         if content_page:
             out["content_page"] = content_page
             feed = extract_feed_from_page(content_page)
+            
+        if not feed:
+            # Fallback to checking the root URL itself explicitly
+            feed = extract_feed_from_page(base_url)
             if feed:
-                out["feed_url"] = feed
-            else:
-                out["feed_url"] = None
-                out["error"] = "No feed found on derived content page"
+                out["content_page"] = base_url
+
+        if feed:
+            out["feed_url"] = feed
+            if "error" in out:
+                del out["error"]
         else:
             out["feed_url"] = None
-            out["error"] = "Could not discover content subpage"
+            out["error"] = "No feed found on derived content subpage or root"
 
     return out
 
