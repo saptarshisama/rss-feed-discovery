@@ -90,7 +90,12 @@ def norm_domain_to_url(domain: str) -> Optional[str]:
     netloc = parsed.netloc or parsed.path
     if not netloc:
         return None
-    return f"{scheme}://{netloc.rstrip('/')}"
+    url = f"{scheme}://{netloc.rstrip('/')}"
+    if parsed.path:
+        url += parsed.path
+    if parsed.query:
+        url += "?" + parsed.query
+    return url
 
 def build_guesses(base_url: str) -> List[str]:
     parsed = urlparse(base_url)
@@ -115,49 +120,12 @@ def fetch_url(url: str) -> Dict:
     except Exception as e:
         return {"error": str(e)}
 
-def discover_from_homepage(site_url: str) -> List[str]:
-    candidates: List[str] = []
-    fetch = fetch_url(site_url)
-    if "error" in fetch:
-        return []
-    r = fetch["response"]
-    try:
-        text = r.text
-    except Exception:
-        try:
-            text = r.content.decode("utf-8", errors="ignore")
-        except Exception:
-            text = ""
-    soup = BeautifulSoup(text, "html.parser")
-
-    for link in soup.find_all("link", href=True):
-        ltype = (link.get("type") or "").lower()
-        rel = " ".join(link.get("rel") or [])
-        href = link.get("href")
-        if not href:
-            continue
-        if "rss" in ltype or "atom" in ltype or "xml" in ltype or "alternate" in rel:
-            candidates.append(urljoin(site_url, href))
-
-    for a in soup.find_all("a", href=True):
-        href = a.get("href")
-        if not href:
-            continue
-        lower = href.lower()
-        if any(k in lower for k in ("rss", "feed", "atom", "xml")):
-            candidates.append(urljoin(site_url, href))
-
-    seen = set(); out = []
-    for c in candidates:
-        c_clean = c.split("#")[0].rstrip("/")
-        if c_clean not in seen:
-            seen.add(c_clean); out.append(c_clean)
-    return out
-
-def looks_like_feed_by_content(text: str) -> bool:
-    if not text: return False
-    t = text.lower()
-    return ("<rss" in t) or ("<feed" in t) or ("<rdf:rdf" in t) or ("<rss:" in t)
+def classify_url(url: str) -> str:
+    parsed = urlparse(url)
+    path = parsed.path.strip("/")
+    if not path or path == "":
+        return "B"
+    return "A"
 
 def test_candidate(url: str) -> Dict:
     result = {"url": url, "final_url": None, "http_status": None, "content_type": None,
@@ -192,48 +160,131 @@ def test_candidate(url: str) -> Dict:
             result["error"] = f"feedparser error: {e}"
     return result
 
+def extract_feed_from_page(content_url: str) -> Optional[str]:
+    fetch = fetch_url(content_url)
+    if "error" not in fetch:
+        r = fetch["response"]
+        try:
+            text = r.text
+        except:
+            text = r.content.decode("utf-8", errors="ignore")
+        soup = BeautifulSoup(text, "html.parser")
+        for link in soup.find_all("link", href=True):
+            ltype = (link.get("type") or "").lower()
+            rel = " ".join(link.get("rel") or [])
+            if "rss" in ltype or "atom" in ltype or "xml" in ltype or "alternate" in rel:
+                href = link.get("href")
+                candidate = urljoin(content_url, href)
+                info = test_candidate(candidate)
+                if info.get("is_feed") and info.get("entries", 0) > 0:
+                    return info.get("final_url") or info.get("url")
+
+    base = content_url.rstrip("/")
+    for p in COMMON_FEED_PATHS:
+        if _stop.is_set(): break
+        candidate = base + p
+        info = test_candidate(candidate)
+        if info.get("is_feed") and info.get("entries", 0) > 0:
+            return info.get("final_url") or info.get("url")
+            
+    candidate = base + "/feed.xml"
+    info = test_candidate(candidate)
+    if info.get("is_feed") and info.get("entries", 0) > 0:
+        return info.get("final_url") or info.get("url")
+        
+    return None
+
+def find_type_b_content_page(homepage_url: str) -> Optional[str]:
+    fetch = fetch_url(homepage_url)
+    if "error" in fetch:
+        return None
+    r = fetch["response"]
+    try:
+        text = r.text
+    except:
+        text = r.content.decode("utf-8", errors="ignore")
+    soup = BeautifulSoup(text, "html.parser")
+    
+    keywords = ["blog", "write", "writing", "essay", "article", "news", "tagged", "tag", "topic", "category", "post", "journal"]
+    
+    candidates = []
+    seen = set()
+    import re
+    for a in soup.find_all("a", href=True):
+        href = a.get("href")
+        if not href or href.startswith("javascript") or href.startswith("mailto"):
+            continue
+        full_url = urljoin(homepage_url, href).split("#")[0].rstrip("/")
+        if full_url in seen or not full_url.startswith(homepage_url):
+            continue
+        
+        parsed = urlparse(full_url)
+        path = parsed.path.lower()
+        
+        segments = re.split(r'[/_\-]', path)
+        best_score = 0.0
+        for seg in segments:
+            if not seg: continue
+            for k in keywords:
+                if k in seg:
+                    score = len(k) / len(seg)
+                    if score > best_score:
+                        best_score = score
+                        
+        if best_score > 0.0:
+            candidates.append((best_score, full_url))
+            seen.add(full_url)
+            
+    if not candidates:
+        return None
+        
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0][1]
+
 def discover_for_site(site_data: Dict) -> Dict:
     domain_input = site_data.get("domain", "")
     base_url = norm_domain_to_url(domain_input)
     out = {
-        "url_input": domain_input,
-        "site": base_url, 
-        "name": site_data.get("name", domain_input),
-        "category": site_data.get("category", "Uncategorized"),
-        "candidates": [], 
-        "best": None
+        "original_url": domain_input,
+        "content_page": None,
+        "feed_url": None,
+        "type": None
     }
+    if "name" in site_data: out["name"] = site_data.get("name")
+    if "category" in site_data: out["category"] = site_data.get("category")
+    
     if not base_url:
-        out["candidates"].append({"url": None, "error": "invalid input"}); return out
+        out["error"] = "invalid input"
+        return out
+        
+    parsed = urlparse(base_url)
+    path = parsed.path.strip("/")
+    is_type_a = (len(path) > 0)
+    
+    out["type"] = "A" if is_type_a else "B"
+    
+    if is_type_a:
+        out["content_page"] = base_url
+        feed = extract_feed_from_page(base_url)
+        if feed:
+            out["feed_url"] = feed
+        else:
+            out["feed_url"] = None
+            out["error"] = "No feed found on specified path"
+    else:
+        content_page = find_type_b_content_page(base_url)
+        if content_page:
+            out["content_page"] = content_page
+            feed = extract_feed_from_page(content_page)
+            if feed:
+                out["feed_url"] = feed
+            else:
+                out["feed_url"] = None
+                out["error"] = "No feed found on derived content page"
+        else:
+            out["feed_url"] = None
+            out["error"] = "Could not discover content subpage"
 
-    homepage_candidates = discover_from_homepage(base_url + "/")
-    guessed = build_guesses(base_url)
-    candidates = []
-    for c in (homepage_candidates + guessed):
-        if _stop.is_set(): break
-        if not c: continue
-        if c.startswith("//"): c = "https:" + c
-        candidates.append(c.split("#")[0].rstrip("/"))
-
-    seen = set(); unique_candidates = []
-    for c in candidates:
-        if c not in seen:
-            unique_candidates.append(c); seen.add(c)
-
-    results = []; best = None
-    for c in unique_candidates:
-        if _stop.is_set(): break
-        info = test_candidate(c); results.append(info)
-        if info.get("is_feed") and info.get("entries", 0) > 0 and not best:
-            best = info.get("final_url") or info.get("url")
-
-    if not best and not _stop.is_set():
-        fallback = base_url + "/feed.xml"
-        info = test_candidate(fallback); results.append(info)
-        if info.get("is_feed") and info.get("entries", 0) > 0:
-            best = info.get("final_url") or info.get("url")
-
-    out["candidates"] = results; out["best"] = best
     return out
 
 # ---------------------
@@ -387,18 +438,18 @@ def main(argv=None) -> int:
                     res = fut.result()
                 except Exception as e:
                     res = {
-                        "url_input": domain_url, 
-                        "site": domain_url, 
-                        "name": domain_data.get("name", domain_url),
-                        "category": domain_data.get("category", "Uncategorized"),
-                        "candidates": [], 
-                        "best": None, 
+                        "original_url": domain_url,
+                        "content_page": None,
+                        "feed_url": None,
+                        "type": None,
                         "error": str(e)
                     }
+                    if "name" in domain_data: res["name"] = domain_data.get("name")
+                    if "category" in domain_data: res["category"] = domain_data.get("category")
                 results.append(res)
                 counter += 1
-                site_display = res.get("site") or res.get("name") or domain_url
-                best = res.get("best") or "None"
+                site_display = res.get("name", res.get("original_url"))
+                best = res.get("feed_url") or "None"
                 # Print numbered line (main thread only)
                 print(GREEN + f"{counter}) Done: {site_display} -> best: {best}" + RESET)
 

@@ -4,18 +4,20 @@ A tool that automatically discovers RSS and Atom feeds from websites. Simply pro
 
 ## 🌟 Features
 
-- **Smart Feed Discovery**: Automatically discovers RSS/Atom feeds by:
-  - Parsing HTML `<link>` tags for feed references
-  - Checking common feed URL patterns (`/feed`, `/rss`, `/atom.xml`, etc.)
-  - Following redirects to find the actual feed location
-  - Verifying feed validity using feedparser
-
+- **Deterministic Feed Discovery**: Intelligent Type A/B discovery strategy:
+  - **Type A (Direct Content Links)**: Strictly extracts feeds from specific provided paths (e.g., `/blog`, `/tagged/topic`).
+  - **Type B (Homepage Discovery)**: Automatically identifies the best internal content subpage (blog, writing, news, etc.) and extracts its feed.
+- **Strict Verification**:
+  - Parses HTML `<link>` tags for feed references
+  - Checks common feed URL patterns (`/feed`, `/rss`, `/atom.xml`, etc.)
+  - Verifies feed validity and entry counts using `feedparser`
 - **Multiple Input Formats**: Supports both CSV and JSON input files
 - **Concurrent Processing**: Uses multi-threading for fast parallel processing of multiple websites
 - **Graceful Interruption**: Ctrl+C saves partial results instead of losing all progress
-- **Detailed Output**: Generates comprehensive JSON reports with all discovered feeds and metadata
-- **Polite Crawling**: Built-in rate limiting to respect server resources
-- **SSL Resilience**: Automatically handles sites with SSL certificate issues (e.g. Medium/Netflix Tech Blog) by bypassing verification
+- **Structured JSON Output**: Generates detailed reports tracking the `original_url`, `content_page`, and verified `feed_url`.
+- **Polite & Resilient**: 
+  - Built-in rate limiting and politeness delays
+  - Bypasses SSL verification for resilient crawling (e.g., Medium, Netflix Tech Blog)
 
 ## 📋 Requirements
 
@@ -226,26 +228,22 @@ The tool automatically detects headers and looks for columns named `domain`, `ur
 
 ## 📤 Output Format
 
-The tool generates a JSON file with detailed results:
+The tool generates a JSON file with a strictly structured result per website:
 
 ```json
 {
   "results": [
     {
-      "name": "https://example.com",
-      "site": "https://example.com",
-      "candidates": [
-        {
-          "url": "https://example.com/feed",
-          "final_url": "https://example.com/feed",
-          "http_status": 200,
-          "content_type": "application/xml",
-          "is_feed": true,
-          "entries": 10,
-          "error": null
-        }
-      ],
-      "best": "https://example.com/feed"
+      "original_url": "https://hackernoon.com/tagged/hackernoon-top-story",
+      "content_page": "https://hackernoon.com/tagged/hackernoon-top-story",
+      "feed_url": "https://hackernoon.com/tagged/hackernoon-top-story/feed",
+      "type": "A"
+    },
+    {
+      "original_url": "https://geohot.github.io",
+      "content_page": "https://geohot.github.io/blog",
+      "feed_url": "https://geohot.github.io/blog/feed",
+      "type": "B"
     }
   ]
 }
@@ -253,31 +251,23 @@ The tool generates a JSON file with detailed results:
 
 ### Output Fields
 
-- **name**: Original input domain/URL
-- **site**: Normalized site URL
-- **candidates**: Array of all tested feed URLs with details:
-  - `url`: Tested URL
-  - `final_url`: Final URL after redirects
-  - `http_status`: HTTP response code
-  - `content_type`: Content-Type header
-  - `is_feed`: Whether it's a valid feed
-  - `entries`: Number of feed entries found
-  - `error`: Error message if any
-- **best**: The best feed URL found (first valid feed with entries)
+- **original_url**: The URL provided in the input file.
+- **content_page**: The specific page where content was identified (same as original for Type A, discovered for Type B).
+- **feed_url**: The verified RSS/Atom feed URL (or `null` if none found).
+- **type**: 
+  - `A`: Input was a specific path; search was restricted to that path.
+  - `B`: Input was a root domain; system discovered the content subpage first.
+- **error**: (Optional) Reason for failure if no feed was discovered.
 
 ## 🔍 How It Works
 
-1. **Normalization**: Converts domain inputs to proper URLs
-2. **Homepage Parsing**: Fetches the homepage and looks for:
-   - `<link>` tags with RSS/Atom types
-   - Anchor tags containing feed-related keywords
-3. **Common Paths**: Tests common feed URL patterns
-4. **Validation**: Verifies each candidate URL by:
-   - Checking HTTP status
-   - Examining Content-Type headers
-   - Parsing content with feedparser
-   - Counting feed entries
-5. **Best Selection**: Chooses the first valid feed with entries
+1. **Classification**: Distinguishes between **Type A** (URL with path/slug) and **Type B** (root domain).
+2. **Path Discovery (Type B only)**: Crawls the homepage for internal links matching greedy keywords: `blog`, `writing`, `essays`, `news`, `tagged`, `topics`, etc.
+3. **Feed Extraction**: Tests the identified content page by:
+   - Parsing the HTML `<head>` for `<link rel="alternate">` tags.
+   - Appending common suffixes (`/feed`, `/rss.xml`, etc.) to the content path.
+4. **Validation**: Verifies each candidate by parsing with `feedparser` to ensure it contains valid entries.
+5. **Final Selection**: Assigns the first working feed found for that specific content location.
 
 ## ⚙️ Configuration
 
