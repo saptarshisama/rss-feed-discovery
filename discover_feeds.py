@@ -25,13 +25,15 @@ from typing import List, Dict, Optional
 from urllib.parse import urlparse, urljoin
 
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 import feedparser
 import threading
 import urllib3
+import warnings
 
 # Suppress insecure request warnings for SSL verify=False
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 # Color output (green)
 try:
