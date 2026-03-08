@@ -1,0 +1,33 @@
+# GitHub Repository Setup Instructions
+
+## Repository Details (Choose one name):
+- Repository Name: rss-feed-discovery
+- Description: Automatically discover RSS and Atom feeds from websites
+- Visibility: Public
+- DO NOT initialize with README, .gitignore, or license (we already have these)
+
+## After Creating the Repository on GitHub:
+
+### Step 1: Add GitHub remote
+git remote add origin https://github.com/YOUR_USERNAME/rss-feed-discovery.git
+
+### Step 2: Rename branch to main (if needed)
+git branch -M main
+
+### Step 3: Push to GitHub
+git push -u origin main
+
+---
+
+## Alternative: If you want to use SSH instead of HTTPS:
+git remote add origin git@github.com:YOUR_USERNAME/rss-feed-discovery.git
+git branch -M main
+git push -u origin main
+
+---
+
+## Quick Copy-Paste Commands (Update YOUR_USERNAME):
+
+git remote add origin https://github.com/YOUR_USERNAME/rss-feed-discovery.git
+git branch -M main
+git push -u origin main

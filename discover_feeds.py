@@ -28,6 +28,10 @@ import requests
 from bs4 import BeautifulSoup
 import feedparser
 import threading
+import urllib3
+
+# Suppress insecure request warnings for SSL verify=False
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Color output (green)
 try:
@@ -104,7 +108,7 @@ def fetch_url(url: str) -> Dict:
         return {"error": "stopped"}
     session = get_session()
     try:
-        r = session.get(url, timeout=REQUEST_TIMEOUT, allow_redirects=True)
+        r = session.get(url, timeout=REQUEST_TIMEOUT, allow_redirects=True, verify=False)
         # polite tiny delay
         time.sleep(SLEEP_BETWEEN_REQUESTS)
         return {"response": r}
@@ -188,9 +192,17 @@ def test_candidate(url: str) -> Dict:
             result["error"] = f"feedparser error: {e}"
     return result
 
-def discover_for_site(domain_input: str) -> Dict:
+def discover_for_site(site_data: Dict) -> Dict:
+    domain_input = site_data.get("domain", "")
     base_url = norm_domain_to_url(domain_input)
-    out = {"name": domain_input, "site": base_url, "candidates": [], "best": None}
+    out = {
+        "url_input": domain_input,
+        "site": base_url, 
+        "name": site_data.get("name", domain_input),
+        "category": site_data.get("category", "Uncategorized"),
+        "candidates": [], 
+        "best": None
+    }
     if not base_url:
         out["candidates"].append({"url": None, "error": "invalid input"}); return out
 
@@ -227,8 +239,8 @@ def discover_for_site(domain_input: str) -> Dict:
 # ---------------------
 # Input helpers
 # ---------------------
-def read_domains_from_csv(path: str) -> List[str]:
-    vals: List[str] = []
+def read_domains_from_csv(path: str) -> List[Dict]:
+    vals: List[Dict] = []
     with open(path, newline="", encoding="utf-8") as fh:
         sniffer = csv.Sniffer()
         sample = fh.read(2048); fh.seek(0)
@@ -239,36 +251,59 @@ def read_domains_from_csv(path: str) -> List[str]:
             has_header = False
         reader = csv.reader(fh)
         if has_header:
-            headers = next(reader, [])
-            idx = None
+            headers = [h.strip().lower() for h in next(reader, [])]
+            url_idx = -1
+            name_idx = -1
+            cat_idx = -1
+            
             for i, h in enumerate(headers):
-                if h and h.strip().lower() in ("domain", "url", "site", "website"):
-                    idx = i; break
-            if idx is None: idx = 0
+                if h in ("domain", "url", "site", "website"): url_idx = i
+                elif h in ("name", "title"): name_idx = i
+                elif h in ("category", "tags", "type"): cat_idx = i
+                
+            if url_idx == -1: url_idx = 0
+            
             for row in reader:
-                if len(row) > idx:
-                    v = row[idx].strip()
-                    if v: vals.append(v)
+                if len(row) > url_idx:
+                    domain = row[url_idx].strip()
+                    if domain:
+                        entry = {"domain": domain}
+                        if name_idx != -1 and len(row) > name_idx: entry["name"] = row[name_idx].strip()
+                        if cat_idx != -1 and len(row) > cat_idx: entry["category"] = row[cat_idx].strip()
+                        vals.append(entry)
         else:
-            # first row is data already read by next(reader) above, so we iterate all rows
             fh.seek(0)
             reader = csv.reader(fh)
             for row in reader:
                 if row and row[0].strip():
-                    vals.append(row[0].strip())
+                    vals.append({"domain": row[0].strip()})
     return vals
 
-def read_domains_from_json(path: str) -> List[str]:
-    vals: List[str] = []
+def read_domains_from_json(path: str) -> List[Dict]:
+    vals: List[Dict] = []
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
+    
+    def extract_dict(item):
+        if isinstance(item, str): return {"domain": item.strip()}
+        if isinstance(item, dict):
+            entry = {}
+            for k in ("url", "domain", "site", "website"):
+                if k in item and isinstance(item[k], str):
+                    entry["domain"] = item[k].strip()
+                    break
+            if "domain" in entry:
+                for k in ("name", "title"):
+                    if k in item and isinstance(item[k], str): entry["name"] = item[k].strip()
+                for k in ("category", "tags", "type"):
+                    if k in item and isinstance(item[k], str): entry["category"] = item[k].strip()
+                return entry
+        return None
+
     if isinstance(data, list):
         for item in data:
-            if isinstance(item, str): vals.append(item.strip())
-            elif isinstance(item, dict):
-                for k in ("url", "domain", "site"):
-                    if k in item and isinstance(item[k], str):
-                        vals.append(item[k].strip()); break
+            val = extract_dict(item)
+            if val: vals.append(val)
     elif isinstance(data, dict):
         list_keys = ("websites", "sites", "domains")
         found = False
@@ -276,15 +311,12 @@ def read_domains_from_json(path: str) -> List[str]:
             if key in data and isinstance(data[key], list):
                 found = True
                 for item in data[key]:
-                    if isinstance(item, str): vals.append(item.strip())
-                    elif isinstance(item, dict):
-                        for k in ("url", "domain", "site"):
-                            if k in item and isinstance(item[k], str):
-                                vals.append(item[k].strip()); break
+                    val = extract_dict(item)
+                    if val: vals.append(val)
                 break
         if not found:
             for v in data.values():
-                if isinstance(v, str): vals.append(v.strip())
+                if isinstance(v, str): vals.append({"domain": v.strip()})
     return vals
 
 # ---------------------
@@ -349,14 +381,23 @@ def main(argv=None) -> int:
                             f.cancel()
                     break
 
-                domain = futures_map[fut]
+                domain_data = futures_map[fut]
+                domain_url = domain_data.get("domain", "")
                 try:
                     res = fut.result()
                 except Exception as e:
-                    res = {"name": domain, "site": domain, "candidates": [], "best": None, "error": str(e)}
+                    res = {
+                        "url_input": domain_url, 
+                        "site": domain_url, 
+                        "name": domain_data.get("name", domain_url),
+                        "category": domain_data.get("category", "Uncategorized"),
+                        "candidates": [], 
+                        "best": None, 
+                        "error": str(e)
+                    }
                 results.append(res)
                 counter += 1
-                site_display = res.get("site") or res.get("name") or domain
+                site_display = res.get("site") or res.get("name") or domain_url
                 best = res.get("best") or "None"
                 # Print numbered line (main thread only)
                 print(GREEN + f"{counter}) Done: {site_display} -> best: {best}" + RESET)

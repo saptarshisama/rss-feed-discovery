@@ -15,6 +15,7 @@ A tool that automatically discovers RSS and Atom feeds from websites. Simply pro
 - **Graceful Interruption**: Ctrl+C saves partial results instead of losing all progress
 - **Detailed Output**: Generates comprehensive JSON reports with all discovered feeds and metadata
 - **Polite Crawling**: Built-in rate limiting to respect server resources
+- **SSL Resilience**: Automatically handles sites with SSL certificate issues (e.g. Medium/Netflix Tech Blog) by bypassing verification
 
 ## 📋 Requirements
 
@@ -317,7 +318,8 @@ This project is open source and available under the MIT License.
 ## 🐛 Troubleshooting
 
 **Issue**: No feeds found for a website
-- **Solution**: Some sites may not have RSS feeds. Check the website manually or try alternative feed discovery services.
+- **Solution**: Some sites may not have RSS feeds. Check the website manually.
+- **Note**: The tool now automatically skips SSL verification errors, which previously caused issues with sites like Netflix Tech Blog.
 
 **Issue**: Timeout errors
 - **Solution**: Increase the timeout value: `--timeout 20`
